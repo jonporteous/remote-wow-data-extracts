@@ -17,11 +17,12 @@ Replaces the manual 20-step process: Postman API calls → JSON → 3 Excel spin
 ## Quick Start
 
 ```batch
-run_wow.bat          # Interactive launcher — prompts for date range, then farm
+run_wow.bat          # Interactive launcher — API mode (requires IP whitelist)
+run_local.bat        # Interactive launcher — local file mode (no API required)
 ```
 
 ```bash
-# Command line — select farm from spreadsheet list:
+# API mode — select farm from spreadsheet list:
 python analyse_wow.py --days 14
 
 # Specify farm directly:
@@ -30,6 +31,9 @@ python analyse_wow.py --farm tobruk --paddock "Tobruk WOW" --start 2025-03-01 --
 
 # List paddocks for a farm:
 python analyse_wow.py --farm tobruk --list-paddocks
+
+# Local file mode (device CSVs or PPL Upload xlsx — no API required):
+python analyse_wow.py --input-dir Input
 
 # File mode (previously downloaded JSON from Postman):
 python analyse_wow.py --weights blue.json --growth red.json --farm MyFarm --paddock "WOW Unit 1"
@@ -45,15 +49,19 @@ Output saved to `Output\YYYY-MM-DD_FarmName_PaddockName\report.html` — opens a
 Remote WOW Data Extracts/
 ├── CLAUDE.md
 ├── analyse_wow.py              # Entry point — orchestrates everything
-├── run_wow.bat                 # Interactive launcher (date range → farm → report)
+├── run_wow.bat                 # Interactive launcher — API mode
+├── run_local.bat               # Interactive launcher — local file mode
 ├── Scripts/
 │   ├── wow_fetcher.py          # PPL API calls (login, paddock list, weights, growth)
 │   ├── wow_parser.py           # JSON → dataclasses (WeightRecord, GrowthRecord, AnimalData)
 │   ├── wow_charts.py           # Per-animal matplotlib charts (weight + growth), base64 PNG
-│   └── wow_report.py           # Self-contained HTML report generator
+│   ├── wow_report.py           # Self-contained HTML report generator
+│   └── wow_csv_parser.py       # Local file parser (device CSVs + PPL Upload xlsx)
 ├── Background Info/
 │   ├── Global WOW Claude.xlsx  # Master WOW unit list (farm name, PPL Name, status)
 │   └── Json to Spiner.xlsx     # Reference: JSON field mapping for PPL API responses
+├── Input/                      # Drop source files here for local file mode
+│   └── Processed/              # Files moved here automatically after processing
 └── Output/                     # Generated reports (git-ignored)
 ```
 
@@ -83,22 +91,34 @@ be added to the PPL Server's Security Groups by BGP support.
 ## Data Flow
 
 ```
-PPL API (JSON)                          or   Postman JSON files
-       │                                            │
-       ▼                                            ▼
-wow_fetcher.py ──► wow_parser.py ──► build_animals()
-                        │
-                        ▼
-                  wow_charts.py  ──► per-animal matplotlib charts (base64 PNG)
-                        │
-                        ▼
-                  wow_report.py  ──► self-contained HTML report
-                                       • KPI summary tiles
-                                       • All-animals sortable table
-                                       • Per-animal navigator (dropdown + prev/next)
-                                       • Weight chart (blue) + Growth chart (red)
-                                       • Download CSV button
+API MODE                                LOCAL FILE MODE
+─────────────────────────────────       ───────────────────────────────────────
+PPL API (JSON)   or  Postman JSON       Input\*.csv  /  Input\*.xlsx
+       │                    │                    │
+       ▼                    ▼                    ▼
+wow_fetcher.py       (file read)         wow_csv_parser.py
+       │                    │                    │
+       └────────────────────┘                    │
+                    │                            │
+                    ▼                            ▼
+             wow_parser.py ◄──────────── raw weight dicts
+                    │
+                    ▼
+            build_animals()
+                    │
+                    ▼
+             wow_charts.py  ──► per-animal matplotlib charts (base64 PNG)
+                    │
+                    ▼
+             wow_report.py  ──► self-contained HTML report
+                                   • KPI summary tiles
+                                   • All-animals sortable table
+                                   • Per-animal navigator (dropdown + prev/next)
+                                   • Weight chart (blue) + Growth chart (red)
+                                   • Download CSV button
 ```
+
+After local file processing, source files are automatically moved to `Input\Processed\`.
 
 ---
 
@@ -180,12 +200,37 @@ The report includes:
 
 ---
 
+## Local File Mode
+
+When the PPL API is inaccessible (IP not whitelisted, working from home, VPN issues),
+device data can be processed from raw files instead.
+
+**Supported formats:**
+
+| File type | Format detected | Weight data? |
+|---|---|---|
+| `[IMEI] exported weightdata data.csv` | Columns: row_num, EID, weight, datetime, score | Yes |
+| `PPL Upload*.xlsx` / `*PPL Upload*.xlsx` | Header: EID, Weight, Date, Time, Score | Yes |
+| `*Timestamps*.csv` / `*Passes*.csv` | Columns: EID, datetime (no weight) | No |
+
+**Workflow:**
+1. Save raw device CSV exports or PPL Upload xlsx files into the `Input\` folder
+2. Double-click `run_local.bat`
+3. Select which files to process (single, range, comma-separated, or 'all')
+4. Enter a report name (or press Enter for the default)
+5. Report opens in browser; processed files are moved to `Input\Processed\` automatically
+
+Note: local file mode produces weight charts only — growth/regression data requires the API.
+
+---
+
 ## Deploying to Another PC (no OneDrive)
 
-Copy these 8 files/folders manually (e.g. via USB):
+Copy these files/folders manually (e.g. via USB):
 
 ```
 run_wow.bat
+run_local.bat
 analyse_wow.py
 Scripts\
     __init__.py
@@ -193,13 +238,15 @@ Scripts\
     wow_parser.py
     wow_charts.py
     wow_report.py
+    wow_csv_parser.py
 Background Info\
     Global WOW Claude.xlsx
 ```
 
-The `Output\` and `__pycache__\` folders are created automatically — do not copy them.
+Create an empty `Input\` folder on the target PC. The `Output\`, `Input\Processed\`,
+and `__pycache__\` folders are created automatically — do not copy them.
 Python must already be installed on the target PC. Required packages (requests, matplotlib,
-pandas, openpyxl) are installed automatically by `run_wow.bat` on first run.
+pandas, openpyxl) are installed automatically by `run_wow.bat` / `run_local.bat` on first run.
 
 ---
 

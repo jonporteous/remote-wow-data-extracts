@@ -15,7 +15,10 @@ SPECIFY FARM DIRECTLY:
 LIST PADDOCKS FOR A FARM:
     python analyse_wow.py --farm tobruk --list-paddocks
 
-FILE MODE (use previously downloaded JSON files):
+LOCAL FILE MODE (device CSV exports or PPL Upload xlsx — no API required):
+    python analyse_wow.py --input-dir Input
+
+FILE MODE (previously downloaded JSON from Postman):
     python analyse_wow.py --weights blue.json --growth red.json
 """
 
@@ -33,6 +36,7 @@ from wow_fetcher import create_session, login, list_paddocks, fetch_weights, fet
 from wow_parser import parse_weights, parse_growth, build_animals
 from wow_charts import animal_chart
 from wow_report import generate_report
+from wow_csv_parser import scan_directory, parse_file, detect_format
 
 _FARMS_FILE = Path(__file__).parent / "Background Info" / "Global WOW Claude.xlsx"
 
@@ -159,6 +163,128 @@ def _make_output_dir(farm: str, paddock: str) -> Path:
     return out
 
 
+# ── Local file mode ──────────────────────────────────────────────────────────
+
+_FORMAT_LABEL = {
+    "exported_weight": "Weight data  (device CSV)",
+    "ppl_xlsx":        "Weight data  (PPL Upload xlsx)",
+    "timestamp":       "Timestamps only — no weight",
+    "unknown":         "Unknown format",
+}
+
+
+def _run_input_dir_mode(input_dir: Path, report_name: str = "") -> tuple[list, str, str, list]:
+    """
+    Scan input_dir, show numbered file list, let user pick files to combine.
+    Returns (weight_record_dicts, farm_name, paddock_name, processed_paths).
+    """
+    files = scan_directory(input_dir)
+    if not files:
+        sys.exit(f"No CSV or xlsx files found in {input_dir}")
+
+    weight_files = [f for f in files if f["format"] in ("exported_weight", "ppl_xlsx")]
+    other_files  = [f for f in files if f["format"] not in ("exported_weight", "ppl_xlsx")]
+
+    print(f"\n  Files in {input_dir.name}\\  ({len(files)} found)\n")
+
+    idx = 1
+    file_index = {}  # number → file dict
+
+    if weight_files:
+        print("  ── Weight data files (can be used for report) ──────────────────")
+        for f in weight_files:
+            label = _FORMAT_LABEL[f["format"]]
+            print(f"  {idx:>4}.  {f['path'].name:<52}  {label}")
+            file_index[idx] = f
+            idx += 1
+
+    if other_files:
+        print("\n  ── Timestamp / pass files (no weight — cannot generate weight report) ──")
+        for f in other_files:
+            label = _FORMAT_LABEL.get(f["format"], "")
+            print(f"  {idx:>4}.  {f['path'].name:<52}  {label}")
+            file_index[idx] = f
+            idx += 1
+
+    if not weight_files:
+        sys.exit(
+            "\n  No weight data files found in this directory.\n"
+            "  Timestamp/pass files do not contain weight readings and cannot produce a report.\n"
+            "  Place 'exported weightdata data.csv' or 'PPL Upload.xlsx' files here and try again."
+        )
+
+    print()
+    print(f"  Enter file number(s) to process.")
+    print(f"  Examples:  1        single file")
+    print(f"             1,2,3    combine multiple files")
+    print(f"             1-{len(weight_files)}      range")
+    print(f"             all      all weight data files ({len(weight_files)} files)")
+    print()
+
+    while True:
+        raw = input("  Selection: ").strip().lower()
+        if raw == "all":
+            chosen = list(weight_files)
+            break
+        selected_nums = set()
+        try:
+            for part in raw.split(","):
+                part = part.strip()
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    selected_nums.update(range(int(a), int(b) + 1))
+                else:
+                    selected_nums.add(int(part))
+            # Validate
+            invalid = [n for n in selected_nums if n not in file_index]
+            if invalid:
+                print(f"  Invalid number(s): {invalid}. Try again.")
+                continue
+            chosen = [file_index[n] for n in sorted(selected_nums)]
+            if not chosen:
+                print("  No files selected. Try again.")
+                continue
+            # Warn if only timestamp files chosen
+            if all(f["format"] not in ("exported_weight", "ppl_xlsx") for f in chosen):
+                print("  Selected files contain no weight data. Choose weight data files.")
+                continue
+            break
+        except ValueError:
+            print("  Invalid input. Use numbers, ranges (1-3), or 'all'.")
+
+    # Report name
+    if not report_name:
+        default_name = chosen[0]["path"].stem if len(chosen) == 1 else input_dir.name
+        # Strip common suffixes to get a clean name
+        for suffix in (" exported weightdata data", " Timestamps", " Passes", " PPL Upload"):
+            default_name = default_name.replace(suffix, "").strip()
+        print()
+        entered = input(f"  Report name (press Enter for '{default_name}'): ").strip()
+        report_name = entered if entered else default_name
+
+    # Parse selected files
+    print()
+    all_records = []
+    for f in chosen:
+        if f["format"] not in ("exported_weight", "ppl_xlsx"):
+            print(f"  Skipping {f['path'].name}  (no weight data)")
+            continue
+        print(f"  Parsing {f['path'].name} ...")
+        recs = parse_file(f["path"], f["format"], source_name=report_name)
+        print(f"    {len(recs)} weight records")
+        all_records.extend(recs)
+
+    if not all_records:
+        sys.exit("\n  No weight records found in selected files.")
+
+    # Use paddock from first record (or report_name if consistent)
+    paddocks_seen = {r.get("paddock", "") for r in all_records}
+    paddock_name = report_name if len(paddocks_seen) > 1 else (all_records[0].get("paddock") or report_name)
+
+    processed_paths = [f["path"] for f in chosen if f["format"] in ("exported_weight", "ppl_xlsx")]
+    return all_records, report_name, paddock_name, processed_paths
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -184,9 +310,12 @@ def main():
                         help="Path to growth JSON (file mode)")
     parser.add_argument("--output", "-o",
                         help="Output directory override")
+    parser.add_argument("--input-dir", "-i",
+                        help="Process local CSV/xlsx files from this directory (no API required)")
     args = parser.parse_args()
 
     file_mode = bool(args.weights or args.growth)
+    input_dir_mode = bool(args.input_dir)
 
     # ── LIST PADDOCKS ─────────────────────────────────────────────────────────
     if args.list_paddocks:
@@ -214,6 +343,70 @@ def main():
         start_date = args.start
     else:
         start_date = None
+
+    # ── LOCAL FILE MODE ───────────────────────────────────────────────────────
+    if input_dir_mode:
+        input_dir = Path(args.input_dir)
+        if not input_dir.is_dir():
+            sys.exit(f"ERROR: Directory not found: {input_dir}")
+
+        raw_records, farm_name, paddock_name, processed_paths = _run_input_dir_mode(input_dir)
+
+        weight_records = parse_weights(raw_records)
+        growth_records = []  # local files have no growth/regression data
+
+        if not weight_records:
+            sys.exit("\n  No usable weight records found. Check the date range and file formats.")
+
+        animals = build_animals(weight_records, growth_records)
+        print(f"\n  {len(animals)} animals  |  {len(weight_records)} weight records")
+
+        # Derive date range from actual records
+        dates = sorted(r.recorded for r in weight_records)
+        start_date = dates[0].strftime("%Y-%m-%d")
+        end_date   = dates[-1].strftime("%Y-%m-%d")
+
+        out_dir = Path(args.output) if args.output else _make_output_dir(farm_name, paddock_name)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n  Generating charts for {len(animals)} animals...")
+        charts = {}
+        for i, animal in enumerate(animals, 1):
+            charts[animal.eid] = animal_chart(animal)
+            if i % 20 == 0 or i == len(animals):
+                print(f"    {i}/{len(animals)}")
+
+        print("  Building report...")
+        meta = {
+            "farm":      farm_name,
+            "paddock":   paddock_name,
+            "start":     start_date,
+            "end":       end_date,
+            "generated": datetime.now().strftime("%d %b %Y %H:%M"),
+        }
+        html = generate_report(animals, weight_records, growth_records, charts, meta)
+
+        report_path = out_dir / "report.html"
+        report_path.write_text(html, encoding="utf-8")
+        print(f"\n  Report saved → {report_path}\n")
+
+        # Move processed files to Input/Processed/
+        processed_dir = input_dir / "Processed"
+        processed_dir.mkdir(exist_ok=True)
+        for src in processed_paths:
+            dest = processed_dir / src.name
+            if dest.exists():
+                # Avoid overwrite: append timestamp suffix
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                dest = processed_dir / f"{src.stem}_{ts}{src.suffix}"
+            src.rename(dest)
+            print(f"  Moved → Processed/{dest.name}")
+
+        try:
+            webbrowser.open(report_path.as_uri())
+        except Exception:
+            pass
+        return
 
     # ── FILE MODE ─────────────────────────────────────────────────────────────
     if file_mode:

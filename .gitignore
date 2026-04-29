@@ -1,6 +1,9 @@
 # Generated output
 Output/
 
+# Input data files (raw device exports — not source code)
+Input/
+
 # Python cache
 __pycache__/
 *.pyc
