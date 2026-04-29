@@ -32,7 +32,7 @@ def create_session():
 
 
 def login(session, username, password):
-    resp = _get(session, f"{PPL_BASE}/login/{username}/{password}", timeout=30)
+    resp = _get(session, f"{PPL_BASE}/login/{username}/{password}", timeout=60)
     resp.raise_for_status()
     text = resp.text.strip().lower()
     try:
@@ -42,7 +42,7 @@ def login(session, username, password):
 
 
 def list_paddocks(session):
-    resp = _get(session, f"{PPL_BASE}/paddock/", timeout=30)
+    resp = _get(session, f"{PPL_BASE}/paddock/", timeout=60)
     resp.raise_for_status()
     return resp.json()
 
