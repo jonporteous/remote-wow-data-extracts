@@ -145,9 +145,26 @@ def parse_ppl_xlsx(path: Path, source_name: str = "") -> list[dict]:
 def parse_timestamp(path: Path) -> list[dict]:
     """
     Parse timestamp-only files: EID, datetime — NO weight data.
-    Returns empty list (cannot contribute to weight report).
+    Returns list of {eid, recorded} dicts for pass record reports.
     """
-    return []
+    records = []
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            for line in fh:
+                parts = line.strip().split(",", 1)
+                if len(parts) < 2:
+                    continue
+                eid = parts[0].strip()
+                dt_str = parts[1].strip()
+                if not eid:
+                    continue
+                dt = _parse_dt(dt_str)
+                if dt is None:
+                    continue
+                records.append({"eid": eid, "recorded": dt})
+    except Exception as e:
+        print(f"  Warning: could not read {path.name}: {e}")
+    return records
 
 
 # ── Directory scanner ─────────────────────────────────────────────────────────
@@ -172,9 +189,11 @@ def scan_directory(directory: Path) -> list[dict]:
 
 
 def parse_file(path: Path, fmt: str, source_name: str = "") -> list[dict]:
-    """Parse a single file given its detected format. Returns weight record dicts."""
+    """Parse a single file given its detected format. Returns record dicts."""
     if fmt == "exported_weight":
         return parse_exported_weight(path, source_name)
     if fmt == "ppl_xlsx":
         return parse_ppl_xlsx(path, source_name)
-    return []  # timestamps and unknown yield no weight data
+    if fmt == "timestamp":
+        return parse_timestamp(path)
+    return []
