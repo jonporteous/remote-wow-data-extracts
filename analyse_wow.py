@@ -44,7 +44,7 @@ def _load_farms():
     if not _FARMS_FILE.exists():
         return None
     try:
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             df = pd.read_excel(_FARMS_FILE)
@@ -52,7 +52,17 @@ def _load_farms():
             (df["Status"].str.strip() == "Installed") &
             df["PPL Name"].notna() &
             (df["PPL Name"].astype(str).str.strip() != "")
-        ].reset_index(drop=True)
+        ].copy()
+        # Sort alphabetically by display name (Farm Name, falling back to Account Name)
+        installed["_sort_key"] = installed.apply(
+            lambda r: (
+                str(r["Farm Name"]).strip()
+                if pd.notna(r["Farm Name"]) and str(r["Farm Name"]).strip() not in ("", "nan")
+                else str(r["Account Name"]).strip()
+            ).lower(),
+            axis=1,
+        )
+        installed = installed.sort_values("_sort_key").drop(columns=["_sort_key"]).reset_index(drop=True)
         return installed if len(installed) > 0 else None
     except Exception as e:
         print(f"  (Could not load farm list: {e})")
