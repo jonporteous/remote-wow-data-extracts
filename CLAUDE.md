@@ -106,17 +106,18 @@ wow_fetcher.py ──► wow_parser.py ──► build_animals()
 
 `Global WOW Claude.xlsx` in `Background Info/` contains all global WOW installations.
 When `--farm` is omitted, `analyse_wow.py` reads this file and shows a numbered list of
-all **Installed** units with a valid PPL Name:
+all **Installed** units with a valid PPL Name, **sorted alphabetically**:
 
 ```
   Available WOW Units  (92 installed)
 
     #    Farm / Account                       Asset
-    1.   Gladfield Dairies Ltd                Gladfield Dairies WOW
-    2.   Tobruk Farms Ltd                     Tobruk Dairy WOW
+    1.   3D Grazing (Current)                 3D Grazing WOW (Current)
+    2.   3M Dairy                             3M Dairy WOW #2 - West Exit WOW
+    3.   3M Dairy                             3M Dairy WOW #1 - East Exit Race WOW
     ...
 
-  Select unit number: 2
+  Select unit number: 49
 ```
 
 The selected row's **PPL Name** is used as both the username and password for PPL login.
@@ -179,12 +180,38 @@ The report includes:
 
 ---
 
+## Deploying to Another PC (no OneDrive)
+
+Copy these 8 files/folders manually (e.g. via USB):
+
+```
+run_wow.bat
+analyse_wow.py
+Scripts\
+    __init__.py
+    wow_fetcher.py
+    wow_parser.py
+    wow_charts.py
+    wow_report.py
+Background Info\
+    Global WOW Claude.xlsx
+```
+
+The `Output\` and `__pycache__\` folders are created automatically — do not copy them.
+Python must already be installed on the target PC. Required packages (requests, matplotlib,
+pandas, openpyxl) are installed automatically by `run_wow.bat` on first run.
+
+---
+
 ## Common Issues
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Connection timeout | IP not whitelisted | Add IP via nsavant master account + BGP support ticket |
-| Login fails | Wrong username or VPN active | Check PPL Name in spreadsheet; disconnect VPN |
-| No paddocks returned | Correct login but empty account | Verify farm has active paddock in PPL |
+| Connection timeout | IP not whitelisted for this farm | Add IP via nsavant master account (API IP ACL) + BGP support ticket for Security Groups |
+| "Cannot reach PPL server" message | IP whitelist or VPN | See detailed guidance printed by the tool |
+| Login fails (returns false) | Wrong PPL Name | Check PPL Name column in `Global WOW Claude.xlsx` |
+| PPL very slow to respond | Server performance | Login/paddock calls allow up to 60 s; data fetch allows 120 s |
+| No paddocks returned | Correct login but no active paddock | Verify farm has an active paddock in PPL |
 | No data for date range | WOW offline or no animals weighed | Try a wider date range |
-| Paddock not auto-matched | PPL Name ≠ paddock name | Select manually from the list shown |
+| Paddock not auto-matched | PPL Name ≠ paddock name | Select manually from the numbered list shown |
+| PPL web dashboard works but API doesn't | API has IP restrictions; web dashboard does not | Whitelist your IP for API access (see above) |
